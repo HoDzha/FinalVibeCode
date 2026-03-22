@@ -78,6 +78,35 @@ python agent.py --web
 python agent.py --web --host 0.0.0.0 --port 8080
 ```
 
+## Docker
+
+Локальный запуск через Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+После старта приложение будет доступно по адресу `http://127.0.0.1:8000`.
+
+Остановка:
+
+```bash
+docker compose down
+```
+
+Если нужен только образ:
+
+```bash
+docker build -t user-questions-agent .
+docker run --rm -p 8000:8000 --env-file .env user-questions-agent
+```
+
+Контейнер по умолчанию запускает веб-режим:
+
+```bash
+python agent.py --web --host 0.0.0.0 --port 8000
+```
+
 ## JSON API
 
 Доступные эндпоинты:
