@@ -5,6 +5,7 @@ import difflib
 import json
 import logging
 import sys
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from html import escape
 from http import HTTPStatus
@@ -25,6 +26,11 @@ LOGGER = logging.getLogger(__name__)
 PAGE_TIMEOUT_SECONDS = 20
 MAX_TEXT_LENGTH = 12000
 COMMON_TLDS = ("ru", "com", "org", "net", "rf", "su")
+NO_CACHE_HEADERS = (
+    ("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0"),
+    ("Pragma", "no-cache"),
+    ("Expires", "0"),
+)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -596,19 +602,101 @@ def render_html(
     return html.encode("utf-8")
 
 
+def build_health_payload() -> dict[str, str]:
+    """Build a health-check payload."""
+    return {
+        "status": "ok",
+        "service": "user-questions-agent",
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def encode_json(payload: dict[str, Any]) -> bytes:
+    """Serialize a JSON payload."""
+    return json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+
+
+def build_headers(content_type: str, body: bytes) -> list[tuple[str, str]]:
+    """Build standard response headers."""
+    return [
+        ("Content-Type", content_type),
+        *NO_CACHE_HEADERS,
+        ("Content-Length", str(len(body))),
+    ]
+
+
+def process_html_request(url: str) -> tuple[HTTPStatus, bytes]:
+    """Process an HTML form submission."""
+    if not url:
+        body = render_html(error_message="Укажите URL страницы.")
+        return HTTPStatus.BAD_REQUEST, body
+
+    try:
+        questions = generate_questions(url)
+    except (
+        FriendlyRequestError,
+        PageExtractionError,
+        requests.RequestException,
+        RetryError,
+        OpenAIConfigurationError,
+        OpenAIResponseError,
+    ) as error:
+        LOGGER.exception("Web request failed for URL %s", url)
+        body = render_html(
+            url=url,
+            error_message=f"Ошибка при обработке страницы: {error}",
+        )
+        return HTTPStatus.BAD_GATEWAY, body
+
+    return HTTPStatus.OK, render_html(url=url, questions=questions)
+
+
+def process_api_request(url: str) -> tuple[HTTPStatus, dict[str, Any]]:
+    """Process an API request."""
+    if not url:
+        return HTTPStatus.BAD_REQUEST, {"error": "Укажите параметр url."}
+
+    try:
+        questions = generate_questions(url)
+    except (
+        FriendlyRequestError,
+        PageExtractionError,
+        requests.RequestException,
+        RetryError,
+        OpenAIConfigurationError,
+        OpenAIResponseError,
+    ) as error:
+        LOGGER.exception("API request failed for URL %s", url)
+        return HTTPStatus.BAD_GATEWAY, {
+            "error": "Ошибка при обработке страницы.",
+            "details": str(error),
+            "url": url,
+        }
+
+    return HTTPStatus.OK, {"url": url, "questions": questions}
+
+
+def extract_url_from_api_body(body: bytes, content_type: str) -> tuple[str | None, dict[str, Any] | None]:
+    """Extract a URL from JSON or form-encoded request data."""
+    text_body = body.decode("utf-8")
+    if "application/json" in content_type:
+        try:
+            payload = json.loads(text_body) if text_body else {}
+        except json.JSONDecodeError:
+            return None, {"error": "Некорректный JSON в теле запроса."}
+        return str(payload.get("url", "")).strip(), None
+
+    form_data = parse_qs(text_body)
+    return form_data.get("url", [""])[0].strip(), None
+
+
 class QuestionsWebHandler(BaseHTTPRequestHandler):
     """Minimal web interface for the questions agent."""
 
     def do_GET(self) -> None:  # noqa: N802
         parsed_url = urlparse(self.path)
         if parsed_url.path == "/api/health":
-            self._send_json(
-                {
-                    "status": "ok",
-                    "service": "user-questions-agent",
-                    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-                }
-            )
+            self._send_json(build_health_payload())
             return
 
         if parsed_url.path == "/api/questions":
@@ -629,88 +717,27 @@ class QuestionsWebHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(content_length).decode("utf-8")
         form_data = parse_qs(body)
         url = form_data.get("url", [""])[0].strip()
-
-        if not url:
-            self._send_html(
-                render_html(error_message="Укажите URL страницы."),
-                status_code=HTTPStatus.BAD_REQUEST,
-            )
-            return
-
-        try:
-            questions = generate_questions(url)
-        except (
-            FriendlyRequestError,
-            PageExtractionError,
-            requests.RequestException,
-            RetryError,
-            OpenAIConfigurationError,
-            OpenAIResponseError,
-        ) as error:
-            LOGGER.exception("Web request failed for URL %s", url)
-            self._send_html(
-                render_html(
-                    url=url,
-                    error_message=f"Ошибка при обработке страницы: {error}",
-                ),
-                status_code=HTTPStatus.BAD_GATEWAY,
-            )
-            return
-
-        self._send_html(render_html(url=url, questions=questions))
+        status_code, html = process_html_request(url)
+        self._send_html(html, status_code=status_code)
 
     def log_message(self, format: str, *args: Any) -> None:
         LOGGER.info("%s - %s", self.address_string(), format % args)
 
     def _handle_api_post(self) -> None:
         content_length = int(self.headers.get("Content-Length", "0"))
-        body = self.rfile.read(content_length).decode("utf-8")
-
-        if "application/json" in self.headers.get("Content-Type", ""):
-            try:
-                payload = json.loads(body) if body else {}
-            except json.JSONDecodeError:
-                self._send_json(
-                    {"error": "Некорректный JSON в теле запроса."},
-                    status_code=HTTPStatus.BAD_REQUEST,
-                )
-                return
-            url = str(payload.get("url", "")).strip()
-        else:
-            form_data = parse_qs(body)
-            url = form_data.get("url", [""])[0].strip()
-
+        body = self.rfile.read(content_length)
+        url, error_payload = extract_url_from_api_body(
+            body,
+            self.headers.get("Content-Type", ""),
+        )
+        if error_payload:
+            self._send_json(error_payload, status_code=HTTPStatus.BAD_REQUEST)
+            return
         self._handle_api_request(url)
 
     def _handle_api_request(self, url: str) -> None:
-        if not url:
-            self._send_json(
-                {"error": "Укажите параметр url."},
-                status_code=HTTPStatus.BAD_REQUEST,
-            )
-            return
-
-        try:
-            questions = generate_questions(url)
-        except (
-            PageExtractionError,
-            requests.RequestException,
-            RetryError,
-            OpenAIConfigurationError,
-            OpenAIResponseError,
-        ) as error:
-            LOGGER.exception("API request failed for URL %s", url)
-            self._send_json(
-                {
-                    "error": "Ошибка при обработке страницы.",
-                    "details": str(error),
-                    "url": url,
-                },
-                status_code=HTTPStatus.BAD_GATEWAY,
-            )
-            return
-
-        self._send_json({"url": url, "questions": questions})
+        status_code, payload = process_api_request(url)
+        self._send_json(payload, status_code=status_code)
 
     def _send_html(
         self,
@@ -718,11 +745,8 @@ class QuestionsWebHandler(BaseHTTPRequestHandler):
         status_code: HTTPStatus = HTTPStatus.OK,
     ) -> None:
         self.send_response(status_code)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-        self.send_header("Pragma", "no-cache")
-        self.send_header("Expires", "0")
-        self.send_header("Content-Length", str(len(html)))
+        for header_name, header_value in build_headers("text/html; charset=utf-8", html):
+            self.send_header(header_name, header_value)
         self.end_headers()
         self.wfile.write(html)
 
@@ -731,15 +755,145 @@ class QuestionsWebHandler(BaseHTTPRequestHandler):
         payload: dict[str, Any],
         status_code: HTTPStatus = HTTPStatus.OK,
     ) -> None:
-        body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+        body = encode_json(payload)
         self.send_response(status_code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-        self.send_header("Pragma", "no-cache")
-        self.send_header("Expires", "0")
-        self.send_header("Content-Length", str(len(body)))
+        for header_name, header_value in build_headers(
+            "application/json; charset=utf-8",
+            body,
+        ):
+            self.send_header(header_name, header_value)
         self.end_headers()
         self.wfile.write(body)
+
+
+class ASGIApplication:
+    """ASGI app for production servers such as uvicorn and gunicorn."""
+
+    async def __call__(
+        self,
+        scope: dict[str, Any],
+        receive: Callable[[], Awaitable[dict[str, Any]]],
+        send: Callable[[dict[str, Any]], Awaitable[None]],
+    ) -> None:
+        if scope["type"] != "http":
+            await self._send_response(
+                send,
+                HTTPStatus.NOT_IMPLEMENTED,
+                b"Unsupported scope type.",
+                "text/plain; charset=utf-8",
+            )
+            return
+
+        method = scope["method"].upper()
+        path = scope["path"]
+        headers = {
+            key.decode("latin-1").lower(): value.decode("latin-1")
+            for key, value in scope.get("headers", [])
+        }
+        query_params = parse_qs(scope.get("query_string", b"").decode("utf-8"))
+
+        if method == "GET" and path == "/api/health":
+            await self._send_json(send, HTTPStatus.OK, build_health_payload())
+            return
+
+        if method == "GET" and path == "/api/questions":
+            url = query_params.get("url", [""])[0].strip()
+            status_code, payload = process_api_request(url)
+            await self._send_json(send, status_code, payload)
+            return
+
+        if method == "POST" and path == "/api/questions":
+            body = await self._read_body(receive)
+            url, error_payload = extract_url_from_api_body(
+                body,
+                headers.get("content-type", ""),
+            )
+            if error_payload:
+                await self._send_json(send, HTTPStatus.BAD_REQUEST, error_payload)
+                return
+            status_code, payload = process_api_request(url or "")
+            await self._send_json(send, status_code, payload)
+            return
+
+        if method == "GET" and path == "/":
+            await self._send_response(
+                send,
+                HTTPStatus.OK,
+                render_html(),
+                "text/html; charset=utf-8",
+            )
+            return
+
+        if method == "POST" and path == "/":
+            body = await self._read_body(receive)
+            form_data = parse_qs(body.decode("utf-8"))
+            url = form_data.get("url", [""])[0].strip()
+            status_code, html = process_html_request(url)
+            await self._send_response(send, status_code, html, "text/html; charset=utf-8")
+            return
+
+        await self._send_response(
+            send,
+            HTTPStatus.NOT_FOUND,
+            b"Not found",
+            "text/plain; charset=utf-8",
+        )
+
+    @staticmethod
+    async def _read_body(
+        receive: Callable[[], Awaitable[dict[str, Any]]],
+    ) -> bytes:
+        body_parts: list[bytes] = []
+        while True:
+            message = await receive()
+            if message["type"] != "http.request":
+                continue
+            body_parts.append(message.get("body", b""))
+            if not message.get("more_body", False):
+                break
+        return b"".join(body_parts)
+
+    @staticmethod
+    async def _send_json(
+        send: Callable[[dict[str, Any]], Awaitable[None]],
+        status_code: HTTPStatus,
+        payload: dict[str, Any],
+    ) -> None:
+        body = encode_json(payload)
+        await ASGIApplication._send_response(
+            send,
+            status_code,
+            body,
+            "application/json; charset=utf-8",
+        )
+
+    @staticmethod
+    async def _send_response(
+        send: Callable[[dict[str, Any]], Awaitable[None]],
+        status_code: HTTPStatus,
+        body: bytes,
+        content_type: str,
+    ) -> None:
+        headers = [
+            (name.encode("latin-1"), value.encode("latin-1"))
+            for name, value in build_headers(content_type, body)
+        ]
+        await send(
+            {
+                "type": "http.response.start",
+                "status": int(status_code),
+                "headers": headers,
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": body,
+            }
+        )
+
+
+app = ASGIApplication()
 
 
 def run_web_server(host: str, port: int) -> None:

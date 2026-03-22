@@ -70,6 +70,8 @@ python agent.py "example.com"
 python agent.py --web
 ```
 
+Этот режим удобен для локальной разработки и быстрых проверок.
+
 По умолчанию приложение будет доступно по адресу `http://127.0.0.1:8000`.
 
 Можно указать свой хост и порт:
@@ -101,10 +103,30 @@ docker build -t user-questions-agent .
 docker run --rm -p 8000:8000 --env-file .env user-questions-agent
 ```
 
-Контейнер по умолчанию запускает веб-режим:
+Контейнер по умолчанию запускает production-сервер через `gunicorn` + `uvicorn` worker:
 
 ```bash
-python agent.py --web --host 0.0.0.0 --port 8000
+gunicorn -k uvicorn.workers.UvicornWorker -w 2 -b 0.0.0.0:8000 agent:app
+```
+
+## Production server
+
+Для production-режима приложение теперь экспортирует ASGI app:
+
+```bash
+agent:app
+```
+
+Локальный запуск через `uvicorn`:
+
+```bash
+uvicorn agent:app --host 0.0.0.0 --port 8000
+```
+
+Запуск через `gunicorn`:
+
+```bash
+gunicorn -k uvicorn.workers.UvicornWorker -w 2 -b 0.0.0.0:8000 agent:app
 ```
 
 ## JSON API

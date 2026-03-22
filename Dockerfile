@@ -13,4 +13,4 @@ COPY agent.py openai_module.py ./
 
 EXPOSE 8000
 
-CMD ["python", "agent.py", "--web", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "2", "-b", "0.0.0.0:8000", "agent:app"]
