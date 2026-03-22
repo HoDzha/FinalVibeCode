@@ -222,15 +222,21 @@ def render_html(
     if questions:
         items = "\n".join(f"<li>{escape(question)}</li>" for question in questions)
         questions_html = f"""
-        <section>
+        <section class="results-panel">
+            <div class="section-kicker">Результат</div>
             <h2>Вопросы пользователей</h2>
-            <ol>{items}</ol>
+            <ol class="questions-list">{items}</ol>
         </section>
         """
 
     error_html = ""
     if error_message:
-        error_html = f'<p class="error">{escape(error_message)}</p>'
+        error_html = f"""
+        <div class="message message-error">
+            <strong>Не получилось обработать страницу.</strong>
+            <span>{escape(error_message)}</span>
+        </div>
+        """
 
     html = f"""<!DOCTYPE html>
 <html lang="ru">
@@ -241,104 +247,348 @@ def render_html(
     <style>
         :root {{
             color-scheme: light;
-            --bg: #f3efe7;
-            --card: #fffdf8;
-            --accent: #146356;
-            --accent-dark: #0b4138;
-            --text: #1f2933;
-            --muted: #52606d;
-            --error: #b42318;
-            --border: #d9d3c7;
+            --bg: #f4efe6;
+            --bg-strong: #ead9bf;
+            --surface: rgba(255, 251, 245, 0.82);
+            --ink: #1c2b2d;
+            --muted: #5f6b68;
+            --line: rgba(28, 43, 45, 0.12);
+            --accent: #0f766e;
+            --accent-deep: #114d4a;
+            --accent-soft: #d7efe9;
+            --warm: #c6763e;
+            --shadow: 0 24px 60px rgba(27, 36, 38, 0.14);
+            --radius-xl: 30px;
+            --radius-lg: 22px;
+            --radius-md: 16px;
         }}
-        * {{ box-sizing: border-box; }}
+        * {{
+            box-sizing: border-box;
+        }}
         body {{
             margin: 0;
-            font-family: Georgia, "Times New Roman", serif;
             background:
-                radial-gradient(circle at top right, rgba(20, 99, 86, 0.16), transparent 32%),
-                linear-gradient(180deg, #f6f0e4 0%, var(--bg) 100%);
-            color: var(--text);
+                radial-gradient(circle at top left, rgba(15, 118, 110, 0.16), transparent 28%),
+                radial-gradient(circle at 85% 15%, rgba(198, 118, 62, 0.18), transparent 24%),
+                linear-gradient(180deg, #f8f2e9 0%, var(--bg) 100%);
+            color: var(--ink);
+            font-family: Georgia, "Times New Roman", serif;
+            min-height: 100vh;
         }}
         main {{
-            max-width: 840px;
-            margin: 48px auto;
-            padding: 0 20px;
+            max-width: 1180px;
+            margin: 0 auto;
+            padding: 40px 20px 56px;
         }}
-        .card {{
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: 20px;
-            padding: 28px;
-            box-shadow: 0 18px 40px rgba(31, 41, 51, 0.08);
+        .shell {{
+            display: grid;
+            grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+            gap: 24px;
+            align-items: start;
+            margin-top: 24px;
+        }}
+        .hero {{
+            position: relative;
+            overflow: hidden;
+            background: linear-gradient(135deg, rgba(255, 250, 242, 0.94), rgba(255, 246, 234, 0.84));
+            border: 1px solid rgba(17, 77, 74, 0.1);
+            border-radius: var(--radius-xl);
+            box-shadow: var(--shadow);
+            padding: 34px;
+        }}
+        .hero::after {{
+            content: "";
+            position: absolute;
+            right: -90px;
+            top: -90px;
+            width: 220px;
+            height: 220px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(15, 118, 110, 0.18), transparent 70%);
+        }}
+        .eyebrow {{
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 18px;
+            padding: 8px 14px;
+            border-radius: 999px;
+            background: var(--accent-soft);
+            color: var(--accent-deep);
+            font-size: 0.9rem;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }}
+        .eyebrow::before {{
+            content: "";
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--warm);
         }}
         h1 {{
             margin-top: 0;
-            font-size: clamp(2rem, 5vw, 3rem);
-            color: var(--accent-dark);
+            margin-bottom: 18px;
+            max-width: 11ch;
+            font-size: clamp(3rem, 7vw, 5.6rem);
+            line-height: 0.92;
+            letter-spacing: -0.04em;
+            color: var(--accent-deep);
         }}
-        p {{
+        .lead {{
+            max-width: 60ch;
+            margin: 0;
+            font-size: 1.14rem;
+            line-height: 1.75;
+            color: var(--muted);
+        }}
+        .hero-grid {{
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 260px;
+            gap: 24px;
+            align-items: end;
+            margin-top: 8px;
+        }}
+        .stats-card,
+        .form-panel,
+        .results-panel {{
+            background: var(--surface);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--line);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow);
+        }}
+        .stats-card {{
+            padding: 22px;
+        }}
+        .stats-card strong {{
+            display: block;
+            font-size: 2.6rem;
+            line-height: 1;
+            color: var(--accent-deep);
+        }}
+        .stats-card span {{
+            display: block;
+            margin-top: 10px;
             color: var(--muted);
             line-height: 1.6;
         }}
+        .side-column {{
+            display: grid;
+            gap: 24px;
+        }}
+        .form-panel {{
+            padding: 28px;
+        }}
+        .section-kicker {{
+            margin-bottom: 12px;
+            color: var(--warm);
+            font-size: 0.9rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }}
+        .form-panel h2,
+        .results-panel h2 {{
+            margin: 0 0 10px;
+            font-size: 2rem;
+            color: var(--accent-deep);
+        }}
+        .panel-text {{
+            margin: 0 0 22px;
+            color: var(--muted);
+            line-height: 1.7;
+        }}
         form {{
             display: grid;
-            gap: 14px;
-            margin-top: 24px;
+            gap: 16px;
         }}
-        input[type="url"] {{
+        label {{
+            font-size: 0.95rem;
+            color: var(--accent-deep);
+            font-weight: 700;
+        }}
+        input[type="text"] {{
             width: 100%;
-            padding: 14px 16px;
-            border: 1px solid var(--border);
-            border-radius: 12px;
+            padding: 16px 18px;
+            border: 1px solid rgba(17, 77, 74, 0.15);
+            border-radius: var(--radius-md);
+            background: rgba(255, 255, 255, 0.9);
             font-size: 1rem;
+            color: var(--ink);
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+        }}
+        input[type="text"]:focus {{
+            outline: none;
+            border-color: rgba(15, 118, 110, 0.55);
+            box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.14);
+            transform: translateY(-1px);
         }}
         button {{
             width: fit-content;
-            padding: 12px 18px;
+            min-width: 220px;
+            padding: 15px 24px;
             border: none;
             border-radius: 999px;
-            background: var(--accent);
+            background: linear-gradient(135deg, var(--accent) 0%, #17887f 100%);
             color: white;
             cursor: pointer;
             font-size: 1rem;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+            box-shadow: 0 18px 32px rgba(15, 118, 110, 0.22);
+            transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
         }}
         button:hover {{
-            background: var(--accent-dark);
+            transform: translateY(-2px);
+            box-shadow: 0 22px 36px rgba(15, 118, 110, 0.28);
+            filter: saturate(1.05);
         }}
-        h2 {{
-            margin-top: 28px;
-            color: var(--accent-dark);
+        .microcopy {{
+            margin: 0;
+            font-size: 0.92rem;
+            color: var(--muted);
         }}
-        ol {{
-            padding-left: 20px;
+        .message {{
+            display: grid;
+            gap: 6px;
+            margin-bottom: 18px;
+            padding: 16px 18px;
+            border-radius: var(--radius-md);
+            font-size: 0.96rem;
+        }}
+        .message-error {{
+            background: #fff1ed;
+            border: 1px solid rgba(180, 35, 24, 0.14);
+            color: #8f2d1f;
+        }}
+        .results-panel {{
+            padding: 28px;
+        }}
+        .questions-list {{
+            margin: 0;
+            padding-left: 0;
+            list-style: none;
+            display: grid;
+            gap: 14px;
+        }}
+        .questions-list li {{
+            position: relative;
+            padding: 16px 18px 16px 58px;
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.74);
+            border: 1px solid rgba(17, 77, 74, 0.08);
             line-height: 1.7;
+            color: var(--ink);
         }}
-        .error {{
-            color: var(--error);
+        .questions-list li::before {{
+            content: "?";
+            position: absolute;
+            left: 18px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 28px;
+            height: 28px;
+            display: grid;
+            place-items: center;
+            border-radius: 50%;
+            background: var(--accent-soft);
+            color: var(--accent-deep);
             font-weight: 700;
+        }}
+        .empty-state {{
+            padding: 24px;
+            border-radius: var(--radius-lg);
+            background: linear-gradient(135deg, rgba(255, 250, 242, 0.85), rgba(235, 247, 244, 0.95));
+            border: 1px dashed rgba(17, 77, 74, 0.2);
+            color: var(--muted);
+            line-height: 1.75;
+        }}
+        .empty-state strong {{
+            color: var(--accent-deep);
+        }}
+        @media (max-width: 980px) {{
+            .shell,
+            .hero-grid {{
+                grid-template-columns: 1fr;
+            }}
+            h1 {{
+                max-width: none;
+            }}
+        }}
+        @media (max-width: 640px) {{
+            main {{
+                padding: 20px 14px 36px;
+            }}
+            .hero,
+            .form-panel,
+            .results-panel {{
+                padding: 22px;
+            }}
+            h1 {{
+                font-size: clamp(2.5rem, 15vw, 4rem);
+            }}
+            button {{
+                width: 100%;
+            }}
         }}
     </style>
 </head>
 <body>
     <main>
-        <section class="card">
-            <h1>Генератор вопросов по сайту</h1>
-            <p>Введите URL страницы, и агент сформирует 5 логичных вопросов, которые мог бы задать пользователь после чтения текста.</p>
-            {error_html}
-            <form method="post">
-                <label for="url">URL страницы</label>
-                <input
-                    id="url"
-                    name="url"
-                    type="text"
-                    inputmode="url"
-                    placeholder="example.com или https://example.com"
-                    value="{escape(url)}"
-                    required
-                >
-                <button type="submit">Сгенерировать вопросы</button>
-            </form>
-            {questions_html}
+        <section class="hero">
+            <div class="eyebrow">AI Website Reader</div>
+            <div class="hero-grid">
+                <div>
+                    <h1>Генератор вопросов по сайту</h1>
+                    <p class="lead">
+                        Вставьте адрес страницы, и агент прочитает содержимое сайта,
+                        выделит суть и сформирует 5 естественных вопросов,
+                        которые действительно мог бы задать пользователь.
+                    </p>
+                </div>
+                <aside class="stats-card">
+                    <strong>5</strong>
+                    <span>
+                        осмысленных вопросов по тексту страницы, API и веб-режим в одном сервисе.
+                    </span>
+                </aside>
+            </div>
+        </section>
+        <section class="shell">
+            <section class="form-panel">
+                <div class="section-kicker">Запуск</div>
+                <h2>Введите адрес страницы</h2>
+                <p class="panel-text">
+                    Можно вставить полный URL или просто домен вроде <strong>mango.ru</strong>.
+                    Если схема не указана, мы автоматически подставим <strong>https://</strong>.
+                </p>
+                {error_html}
+                <form method="post">
+                    <label for="url">URL страницы</label>
+                    <input
+                        id="url"
+                        name="url"
+                        type="text"
+                        inputmode="url"
+                        placeholder="mango.ru или https://example.com"
+                        value="{escape(url)}"
+                        required
+                    >
+                    <button type="submit">Сгенерировать вопросы</button>
+                    <p class="microcopy">
+                        Поддерживаются обычные сайты, домены без схемы, а также запросы через JSON API.
+                    </p>
+                </form>
+            </section>
+            <div class="side-column">
+                {questions_html or '''
+                <section class="empty-state">
+                    <strong>Пока вопросов нет.</strong><br>
+                    После отправки URL здесь появится список из пяти вопросов по содержанию страницы.
+                </section>
+                '''}
+            </div>
         </section>
     </main>
 </body>
